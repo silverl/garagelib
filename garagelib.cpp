@@ -2,16 +2,37 @@
 #include <secplus.h>
 #include <Arduino.h>
 #include <SoftwareSerial.h>
+#include "garagelib.h"
 
-//#define GARAGELIB_DEBUG
-#ifdef GARAGELIB_DEBUG
-#define GARAGELIB_PRINT_TAG Serial.print(F("[GARAGELIB] "))
-#define GARAGELIB_PRINT(x) GARAGELIB_PRINT_TAG; Serial.print(x)
-#define GARAGELIB_PRINTLN(x) GARAGELIB_PRINT_TAG; Serial.println(x)
-#else
-#define GARAGELIB_PRINT(x)
-#define GARAGELIB_PRINTLN(x)
-#endif
+// Debug callback support - allows runtime-configurable debug output
+static garagelib_debug_callback_t _debug_callback = NULL;
+
+extern "C" void garagelib_set_debug_callback(garagelib_debug_callback_t callback) {
+	_debug_callback = callback;
+}
+
+// Internal debug buffer for formatting messages
+static char _debug_buf[128];
+
+static void _debug_print(const char* msg) {
+	if (_debug_callback) {
+		_debug_callback(msg);
+	}
+}
+
+// Helper to copy flash string to buffer and print
+static void _debug_println_P(const char* flash_str) {
+	if (_debug_callback) {
+		strncpy_P(_debug_buf, flash_str, sizeof(_debug_buf) - 1);
+		_debug_buf[sizeof(_debug_buf) - 1] = '\0';
+		_debug_print(_debug_buf);
+	}
+}
+
+#define GARAGELIB_PRINTLN(x) _debug_println_P((const char*)x)
+
+// Enable detailed packet logging when callback is set
+#define GARAGELIB_DEBUG_ENABLED (_debug_callback != NULL)
 
 namespace SecPlusCommon {
 	static const size_t metadata_size = 2;
@@ -296,23 +317,17 @@ namespace SecPlus2 {
 					if (reader.read_byte(SecPlusCommon::sw_serial->read())) {
 						// If the packet is complete
 						uint8_t *packet = reader.get_packet();
-						#ifdef GARAGELIB_DEBUG
-						uint32_t r = 0;
-						uint64_t i = 0;
-						uint16_t c = 0;
-						uint32_t p = 0;
-						decode_wireline_command(packet, &r, &i, &c, &p);
-						GARAGELIB_PRINT_TAG;
-						Serial.print(F("[INCOMING PACKET] Rolling code: "));
-						Serial.print(r);
-						Serial.print(F(" id: "));
-						Serial.print(i, HEX);
-						Serial.print(F(" command: "));
-						Serial.print(c, HEX);
-						Serial.print(F(" payload: "));
-						Serial.print(p, HEX);
-						Serial.println(".");
-						#endif
+						if (GARAGELIB_DEBUG_ENABLED) {
+							uint32_t r = 0;
+							uint64_t i = 0;
+							uint16_t c = 0;
+							uint32_t p = 0;
+							decode_wireline_command(packet, &r, &i, &c, &p);
+							snprintf(_debug_buf, sizeof(_debug_buf),
+								"[SEC+2 RX] roll=%lu id=%lX cmd=%X payload=%lX",
+								(unsigned long)r, (unsigned long)i, c, (unsigned long)p);
+							_debug_print(_debug_buf);
+						}
 						process_packet(packet);
 					}
 				}
@@ -435,30 +450,17 @@ namespace SecPlus2 {
 				if (check_collision && digitalRead(rx_pin)) return -1;
 
 
-				#ifdef GARAGELIB_DEBUG
-				uint32_t r = 0;
-				uint64_t i = 0;
-				uint16_t c = 0;
-				uint32_t p = 0;
-				decode_wireline_command(packet, &r, &i, &c, &p);
-				GARAGELIB_PRINT_TAG;
-				Serial.print(F("[OUTGOING PACKET] Rolling code: "));
-				Serial.print(r);
-				Serial.print(F(" id: "));
-				Serial.print(i, HEX);
-				Serial.print(F(" command: "));
-				Serial.print(c, HEX);
-				Serial.print(F(" payload: "));
-				Serial.print(p, HEX);
-				Serial.println(".");
-
-				GARAGELIB_PRINT_TAG;
-				Serial.print(F("Sending packet: ["));
-				for (int i = 0; i < SEC2_PACKET_SIZE; i++) {
-					Serial.print(packet[i], HEX);
+				if (GARAGELIB_DEBUG_ENABLED) {
+					uint32_t r = 0;
+					uint64_t i = 0;
+					uint16_t c = 0;
+					uint32_t p = 0;
+					decode_wireline_command(packet, &r, &i, &c, &p);
+					snprintf(_debug_buf, sizeof(_debug_buf),
+						"[SEC+2 TX] roll=%lu id=%lX cmd=%X payload=%lX",
+						(unsigned long)r, (unsigned long)i, c, (unsigned long)p);
+					_debug_print(_debug_buf);
 				}
-				Serial.println("]");
-				#endif
 
 				SecPlusCommon::sw_serial->write(packet, SEC2_PACKET_SIZE);
 				delayMicroseconds(100);
@@ -813,12 +815,10 @@ namespace SecPlus1 {
 
 			void send_data(uint8_t *packet) {
 				if(!SecPlusCommon::sw_serial) return;
-				#ifdef GARAGELIB_DEBUG
-				GARAGELIB_PRINT_TAG;
-				Serial.print(F("[OUTGOING PACKET] Command: "));
-				Serial.print(*packet);
-				Serial.println(".");
-				#endif
+				if (GARAGELIB_DEBUG_ENABLED) {
+					snprintf(_debug_buf, sizeof(_debug_buf), "[SEC+1 TX] cmd=%02X", *packet);
+					_debug_print(_debug_buf);
+				}
 
 				SecPlusCommon::sw_serial->write(packet, 1);
 				delayMicroseconds(100);
@@ -836,23 +836,17 @@ namespace SecPlus1 {
 							break;
 						default:
 							// Only handle the status commands for now
-							#ifdef GARAGELIB_DEBUG
-							GARAGELIB_PRINT_TAG;
-							Serial.print(F("[INCOMING PACKET] Command: "));
-							Serial.print(packet, HEX);
-							Serial.println(".");
-							#endif
+							if (GARAGELIB_DEBUG_ENABLED) {
+								snprintf(_debug_buf, sizeof(_debug_buf), "[SEC+1 RX] cmd=%02X", packet);
+								_debug_print(_debug_buf);
+							}
 							break;
 					}
 				} else {
-					#ifdef GARAGELIB_DEBUG
-					GARAGELIB_PRINT_TAG;
-					Serial.print(F("[INCOMING PACKET] Command: "));
-					Serial.print(current_command, HEX);
-					Serial.print(F(" data: "));
-					Serial.print(packet, HEX);
-					Serial.println(".");
-					#endif
+					if (GARAGELIB_DEBUG_ENABLED) {
+						snprintf(_debug_buf, sizeof(_debug_buf), "[SEC+1 RX] cmd=%02X data=%02X", current_command, packet);
+						_debug_print(_debug_buf);
+					}
 					Command command = static_cast<Command>(current_command);
 					switch (command) {
 						case Command::DOOR_STATUS: {
