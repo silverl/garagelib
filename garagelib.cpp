@@ -1,3 +1,7 @@
+// Include guard to prevent multiple definitions when included directly
+#ifndef GARAGELIB_CPP_INCLUDED
+#define GARAGELIB_CPP_INCLUDED
+
 #include <cstdint>
 #include <secplus.h>
 #include <Arduino.h>
@@ -7,7 +11,7 @@
 // Debug callback support - allows runtime-configurable debug output
 static garagelib_debug_callback_t _debug_callback = NULL;
 
-extern "C" void garagelib_set_debug_callback(garagelib_debug_callback_t callback) {
+void garagelib_set_debug_callback(garagelib_debug_callback_t callback) {
 	_debug_callback = callback;
 }
 
@@ -901,3 +905,4 @@ namespace SecPlus1 {
 			}
 	};
 }
+#endif // GARAGELIB_CPP_INCLUDED
